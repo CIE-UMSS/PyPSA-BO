@@ -1,0 +1,4 @@
+Download customized data for Boliva from:
+https://mseduculiegebe-my.sharepoint.com/:f:/g/personal/caa_fernandez_doct_uliege_be/Et0douOgiIdNoHVqAQCQr8QB25K9n3xZFW6bWqDsnm--1Q?e=JwZoSh
+
+The folders should be replaced in their respective places in your own pypsa-earth folder
