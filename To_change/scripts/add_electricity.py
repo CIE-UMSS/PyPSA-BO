@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 # SPDX-FileCopyrightText:  PyPSA-Earth and PyPSA-Eur Authors
 #
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 # -*- coding: utf-8 -*-
 """
-Adds electrical generators, load and existing hydro storage units to a base network.
+Adds electrical generators, load and existing hydro storage units to a base
+network.
 
 Relevant Settings
 -----------------
@@ -34,6 +35,7 @@ Relevant Settings
         hydro:
             carriers:
             hydro_max_hours:
+            hydro_max_hours_default:
             hydro_capital_cost:
 
     lines:
@@ -41,7 +43,7 @@ Relevant Settings
 
 .. seealso::
     Documentation of the configuration file ``config.yaml`` at :ref:`costs_cf`,
-    :ref:`electricity_cf`, :ref:`load_cf`, :ref:`renewable_cf`, :ref:`lines_cf`
+    :ref:`electricity_cf`, :ref:`load_options_cf`, :ref:`renewable_cf`, :ref:`lines_cf`
 
 Inputs
 ------
@@ -49,8 +51,7 @@ Inputs
 - ``resources/costs.csv``: The database of cost assumptions for all included technologies for specific years from various sources; e.g. discount rate, lifetime, investment (CAPEX), fixed operation and maintenance (FOM), variable operation and maintenance (VOM), fuel costs, efficiency, carbon-dioxide intensity.
 - ``data/bundle/hydro_capacities.csv``: Hydropower plant store/discharge power capacities, energy storage capacity, and average hourly inflow by country.  Not currently used!
 
-    .. image:: ../img/hydrocapacities.png
-        :scale: 34 %
+    .. image:: /img/hydrocapacities.png
 
 - ``data/geth2015_hydro_capacities.csv``: alternative to capacities above; not currently used!
 - ``resources/demand_profiles.csv``: a csv file containing the demand profile associated with buses
@@ -64,8 +65,9 @@ Outputs
 
 - ``networks/elec.nc``:
 
-    .. image:: ../img/elec.png
-            :scale: 33 %
+    .. image:: /img/elec.png
+            :width: 75 %
+            :align: center
 
 Description
 -----------
@@ -92,14 +94,12 @@ import pandas as pd
 import powerplantmatching as pm
 import pypsa
 import xarray as xr
-from _helpers import configure_logging, getContinent, update_p_nom_max
+from _helpers import configure_logging, create_logger, read_csv_nafix, update_p_nom_max
 from powerplantmatching.export import map_country_bus
-from shapely.validation import make_valid
-from vresutils import transfer as vtransfer
 
 idx = pd.IndexSlice
 
-logger = logging.getLogger(__name__)
+logger = create_logger(__name__)
 
 
 def normed(s):
@@ -109,7 +109,7 @@ def normed(s):
 def calculate_annuity(n, r):
     """
     Calculate the annuity factor for an asset with lifetime n years and
-    discount rate of r, e.g. annuity(20, 0.05) * 20 = 1.6
+    discount rate of r, e.g. annuity(20, 0.05) * 20 = 1.6.
     """
     if isinstance(r, pd.Series):
         return pd.Series(1 / n, index=r.index).where(
@@ -137,7 +137,7 @@ def _add_missing_carriers_from_costs(n, costs, carriers):
 
 def load_costs(tech_costs, config, elec_config, Nyears=1):
     """
-    set all asset costs and other parameters
+    Set all asset costs and other parameters.
     """
     costs = pd.read_csv(tech_costs, index_col=["technology", "parameter"]).sort_index()
 
@@ -220,65 +220,25 @@ def load_powerplants(ppl_fn):
         "ccgt, thermal": "CCGT",
         "hard coal": "coal",
     }
-    return (
-        pd.read_csv(ppl_fn, index_col=0, dtype={"bus": "str"})
+    ppl = (
+        read_csv_nafix(ppl_fn, index_col=0, dtype={"bus": "str"})
         .powerplant.to_pypsa_names()
         .powerplant.convert_country_to_alpha2()
         .rename(columns=str.lower)
         .drop(columns=["efficiency"])
         .replace({"carrier": carrier_dict})
     )
-
-
-
-
-
-##### section added to modify and attach inflow information to data sources (begin)
-
-def modifiy_hydro_powerplants(ppl):
-    hydro_plants=ppl
-    hydro_plants.loc[hydro_plants['name'].str.startswith('SRO02'), 'name'] = 'SRO02' # function in order to supress the *
-    hydro_plants.loc[hydro_plants['name'].str.startswith('CHU'), 'name'] = 'CHU'
-    hydro_plants.loc[hydro_plants['name'].str.startswith('PUH'), 'name'] = 'PUH'
-    return hydro_plants
-
-
-def load_inflows(inflows_sddp):
-    return pd.read_csv(inflows_sddp,sep=';', index_col=0)
-
-        
-def modify_inflows(inflows,ppl,normalisation_factor):   
-    hydro_inflows_dict = {}
-    
-    hydro_plants = ppl
-    
-    for name in hydro_plants.index:
-        capacity = hydro_plants.loc[name, 'p_nom']
-        inflows_series = inflows[hydro_plants.loc[name, 'name']] * capacity
-        hydro_inflows_dict[name] = inflows_series.values
-
-    inflow_t = pd.DataFrame.from_dict(hydro_inflows_dict, orient='columns', dtype='float')*normalisation_factor
-    inflow_t.columns.name = 'name' 
-
-    time_range = pd.date_range(start='2013-01-01 00:00:00', end='2013-12-31 23:00:00', freq='H')
-
-    # reindex dataframe with time-based indices and integer-based columns
-    inflow_t = inflow_t.set_index(time_range)#.reset_index(drop=True)
-    inflow_t.index.name = 'date'
-
-    return inflow_t
-
-
-
-##### section added to modify and attach inflow information to data sources (end)
-
-
-
+    # drop powerplants with null capacity
+    null_ppls = ppl[ppl.p_nom <= 0]
+    if not null_ppls.empty:
+        logger.warning(f"Drop powerplants with null capacity: {list(null_ppls.name)}.")
+        ppl = ppl.drop(null_ppls.index).reset_index(drop=True)
+    return ppl
 
 
 def attach_load(n, demand_profiles):
     """
-    Add load profiles to network buses
+    Add load profiles to network buses.
 
     Parameters
     ----------
@@ -293,9 +253,38 @@ def attach_load(n, demand_profiles):
     n : pypsa network
         Now attached with load time series
     """
-    demand_df = pd.read_csv(demand_profiles, index_col=0, parse_dates=True)
+    demand_df = read_csv_nafix(demand_profiles, index_col=0, parse_dates=True)
 
     n.madd("Load", demand_df.columns, bus=demand_df.columns, p_set=demand_df)
+
+
+def attach_dc_costs(lines_or_links, costs, length_factor=1.0, simple_hvdc_costs=False):
+    if lines_or_links.empty:
+        return
+
+    if lines_or_links.loc[lines_or_links.carrier == "DC"].empty:
+        return
+
+    dc_b = lines_or_links.carrier == "DC"
+    if simple_hvdc_costs:
+        costs = (
+            lines_or_links.loc[dc_b, "length"]
+            * length_factor
+            * costs.at["HVDC overhead", "capital_cost"]
+        )
+    else:
+        costs = (
+            lines_or_links.loc[dc_b, "length"]
+            * length_factor
+            * (
+                (1.0 - lines_or_links.loc[dc_b, "underwater_fraction"])
+                * costs.at["HVDC overhead", "capital_cost"]
+                + lines_or_links.loc[dc_b, "underwater_fraction"]
+                * costs.at["HVDC submarine", "capital_cost"]
+            )
+            + costs.at["HVDC inverter pair", "capital_cost"]
+        )
+    lines_or_links.loc[dc_b, "capital_cost"] = costs
 
 
 def update_transmission_costs(n, costs, length_factor=1.0, simple_hvdc_costs=False):
@@ -303,45 +292,28 @@ def update_transmission_costs(n, costs, length_factor=1.0, simple_hvdc_costs=Fal
         n.lines["length"] * length_factor * costs.at["HVAC overhead", "capital_cost"]
     )
 
-    if n.links.empty:
-        return
-
-    dc_b = n.links.carrier == "DC"
-    # If there are no "DC" links, then the 'underwater_fraction' column
-    # may be missing. Therefore we have to return here.
-    # TODO: Require fix
-    if n.links.loc[n.links.carrier == "DC"].empty:
-        return
-
-    if simple_hvdc_costs:
-        costs = (
-            n.links.loc[dc_b, "length"]
-            * length_factor
-            * costs.at["HVDC overhead", "capital_cost"]
-        )
-    else:
-        costs = (
-            n.links.loc[dc_b, "length"]
-            * length_factor
-            * (
-                (1.0 - n.links.loc[dc_b, "underwater_fraction"])
-                * costs.at["HVDC overhead", "capital_cost"]
-                + n.links.loc[dc_b, "underwater_fraction"]
-                * costs.at["HVDC submarine", "capital_cost"]
-            )
-            + costs.at["HVDC inverter pair", "capital_cost"]
-        )
-    n.links.loc[dc_b, "capital_cost"] = costs
+    attach_dc_costs(
+        lines_or_links=n.links,
+        costs=costs,
+        length_factor=length_factor,
+        simple_hvdc_costs=simple_hvdc_costs,
+    )
+    attach_dc_costs(
+        lines_or_links=n.lines,
+        costs=costs,
+        length_factor=length_factor,
+        simple_hvdc_costs=simple_hvdc_costs,
+    )
 
 
 def attach_wind_and_solar(
     n,
     costs,
     ppl,
-    input_profiles,
+    input_files,
     technologies,
     extendable_carriers,
-    line_length_factor=1,
+    line_length_factor,
 ):
     # TODO: rename tech -> carrier, technologies -> carriers
     _add_missing_carriers_from_costs(n, costs, technologies)
@@ -352,42 +324,41 @@ def attach_wind_and_solar(
         if tech == "hydro":
             continue
 
-        ##### recentrly added lines to allow inclusion of renewable PP in 2020
-
         if tech == "offwind-ac":
             # add all offwind wind power plants by default as offwind-ac
             df.carrier.mask(df.technology == "Offshore", "offwind-ac", inplace=True)
 
         df.carrier.mask(df.technology == "Onshore", "onwind", inplace=True)
 
-
-        with xr.open_dataset(getattr(snakemake.input, "profile_" + tech)) as ds:
+        with xr.open_dataset(getattr(input_files, "profile_" + tech)) as ds:
             if ds.indexes["bus"].empty:
                 continue
 
             suptech = tech.split("-", 2)[0]
             if suptech == "offwind":
-                continue
-                # TODO: Uncomment out and debug.
-                # underwater_fraction = ds["underwater_fraction"].to_pandas()
-                # connection_cost = (
-                #     snakemake.config["lines"]["length_factor"] *
-                #     ds["average_distance"].to_pandas() *
-                #     (underwater_fraction *
-                #      costs.at[tech + "-connection-submarine", "capital_cost"] +
-                #      (1.0 - underwater_fraction) *
-                #      costs.at[tech + "-connection-underground", "capital_cost"]
-                #      ))
-                # capital_cost = (costs.at["offwind", "capital_cost"] +
-                #                 costs.at[tech + "-station", "capital_cost"] +
-                #                 connection_cost)
-                # logger.info(
-                #     "Added connection cost of {:0.0f}-{:0.0f} Eur/MW/a to {}".
-                #     format(connection_cost.min(), connection_cost.max(), tech))
+                underwater_fraction = ds["underwater_fraction"].to_pandas()
+                connection_cost = (
+                    line_length_factor
+                    * ds["average_distance"].to_pandas()
+                    * (
+                        underwater_fraction
+                        * costs.at[tech + "-connection-submarine", "capital_cost"]
+                        + (1.0 - underwater_fraction)
+                        * costs.at[tech + "-connection-underground", "capital_cost"]
+                    )
+                )
+                capital_cost = (
+                    costs.at["offwind", "capital_cost"]
+                    + costs.at[tech + "-station", "capital_cost"]
+                    + connection_cost
+                )
+                logger.info(
+                    "Added connection cost of {:0.0f}-{:0.0f} Eur/MW/a to {}".format(
+                        connection_cost.min(), connection_cost.max(), tech
+                    )
+                )
             else:
                 capital_cost = costs.at[tech, "capital_cost"]
-
-            ##### recently added lines to allow inclusion of renewable PP in 2020 
 
             if not df.query("carrier == @tech").empty:
                 buses = n.buses.loc[ds.indexes["bus"]]
@@ -412,7 +383,7 @@ def attach_wind_and_solar(
                 marginal_cost=costs.at[suptech, "marginal_cost"],
                 capital_cost=capital_cost,
                 efficiency=costs.at[suptech, "efficiency"],
-                )
+            )
 
 
 def attach_conventional_generators(
@@ -421,10 +392,13 @@ def attach_conventional_generators(
     ppl,
     conventional_carriers,
     extendable_carriers,
+    renewable_carriers,
     conventional_config,
     conventional_inputs,
 ):
-    carriers = set(conventional_carriers) ##### | set(extendable_carriers["Generator"])    ### commented to avoid assigning solar, wind or hydro as conventional generators
+    carriers = set(conventional_carriers) | (
+        set(extendable_carriers["Generator"]) - set(renewable_carriers)
+    )
     _add_missing_carriers_from_costs(n, costs, carriers)
 
     ppl = (
@@ -465,7 +439,7 @@ def attach_conventional_generators(
             if f"conventional_{carrier}_{attr}" in conventional_inputs:
                 # Values affecting generators of technology k country-specific
                 # First map generator buses to countries; then map countries to p_max_pu
-                values = pd.read_csv(values, index_col=0).iloc[:, 0]
+                values = read_csv_nafix(values, index_col=0).iloc[:, 0]
                 bus_values = n.buses.country.map(values)
                 n.generators[attr].update(
                     n.generators.loc[idx].bus.map(bus_values).dropna()
@@ -475,10 +449,42 @@ def attach_conventional_generators(
                 n.generators.loc[idx, attr] = values
 
 
-def attach_hydro(n, costs, ppl, inflows_sddp):        ##### section added to modify and attach inflow information to data sources
-    if "hydro" not in snakemake.config["renewable"]:
+##### section added to modify and attach inflow information to data sources (begin)
+
+def modifiy_hydro_powerplants(ppl):
+    hydro_plants=ppl
+    hydro_plants.loc[hydro_plants['name'].str.startswith('SRO02'), 'name'] = 'SRO02' # function in order to supress the *
+    hydro_plants.loc[hydro_plants['name'].str.startswith('CHU'), 'name'] = 'CHU'
+    hydro_plants.loc[hydro_plants['name'].str.startswith('PUH'), 'name'] = 'PUH'
+    return hydro_plants
+
+def modify_inflows(inflows,ppl,normalisation_factor):   
+    hydro_inflows_dict = {}
+    
+    hydro_plants = ppl
+    
+    for name in hydro_plants.index:
+        capacity = hydro_plants.loc[name, 'p_nom']
+        inflows_series = inflows[hydro_plants.loc[name, 'name']] * capacity
+        hydro_inflows_dict[name] = inflows_series.values
+
+    inflow_t = pd.DataFrame.from_dict(hydro_inflows_dict, orient='columns', dtype='float')*normalisation_factor
+    inflow_t.columns.name = 'name' 
+
+    time_range = pd.date_range(start='2013-01-01 00:00:00', end='2013-12-31 23:00:00', freq='H')
+
+    # reindex dataframe with time-based indices and integer-based columns
+    inflow_t = inflow_t.set_index(time_range)#.reset_index(drop=True)
+    inflow_t.index.name = 'date'
+
+    return inflow_t
+
+##### section added to modify and attach inflow information to data sources (end)
+
+def attach_hydro(n, costs, ppl):
+    if "hydro" not in snakemake.params.renewable:
         return
-    c = snakemake.config["renewable"]["hydro"]
+    c = snakemake.params.renewable["hydro"]
     carriers = c.get("carriers", ["ror", "PHS", "hydro"])
 
     _add_missing_carriers_from_costs(n, costs, carriers)
@@ -495,15 +501,19 @@ def attach_hydro(n, costs, ppl, inflows_sddp):        ##### section added to mod
     
     ##### section added to modify and attach inflow information to data sources (end)
 
-
-    # TODO: remove this line to address nan when powerplantmatching is stable
     # Current fix, NaN technologies set to ROR
-    ppl.loc[ppl.technology.isna(), "technology"] = "Run-Of-River"
+    if ppl.technology.isna().any():
+        n_nans = ppl.technology.isna().sum()
+        logger.warning(
+            f"Identified {n_nans} hydro powerplants with unknown technology.\n"
+            "Initialized to 'Run-Of-River'"
+        )
+        ppl.loc[ppl.technology.isna(), "technology"] = "Run-Of-River"
 
     ror = ppl.query('technology == "Run-Of-River"')
     phs = ppl.query('technology == "Pumped Storage"')
     hydro = ppl.query('technology == "Reservoir"')
-    if snakemake.config["cluster_options"]["alternative_clustering"]:
+    if snakemake.params.alternative_clustering:
         bus_id = ppl["region_id"]
     else:
         bus_id = ppl["bus"]
@@ -511,22 +521,56 @@ def attach_hydro(n, costs, ppl, inflows_sddp):        ##### section added to mod
     inflow_idx = ror.index.union(hydro.index)
     if not inflow_idx.empty:
         with xr.open_dataarray(snakemake.input.profile_hydro) as inflow:
-            inflow_stations = pd.Index(bus_id[inflow_idx])
-            missing_c = inflow_stations.unique().difference(inflow.indexes["plant"])
-            assert missing_c.empty, (
-                f"'{snakemake.input.profile_hydro}' is missing "
-                f"inflow time-series for at least one bus: {', '.join(missing_c)}"
+            inflow_buses = bus_id[inflow_idx]
+            missing_plants = pd.Index(inflow_buses.unique()).difference(
+                inflow.indexes["plant"]
             )
+            # map power plants index (regions_onshore) into power plants ids (powerplants.csv)
+            # plants_to_keep correspond to "plant" index of regions_onshore
+            # plants_to_keep.index corresponds to bus_id of PyPSA network
+            plants_with_data = inflow_buses[inflow_buses.isin(inflow.indexes["plant"])]
+            plants_to_keep = plants_with_data.to_numpy()
 
-            
+            # if missing time series are found, notify the user and exclude missing hydro plants
+            if not missing_plants.empty:
+                # original total p_nom
+                total_p_nom = ror.p_nom.sum() + hydro.p_nom.sum()
+                # update plants_with_data to ensure proper match between "plant" index and bus_id
+                plants_with_data = inflow_buses[inflow_buses.isin(plants_to_keep)]
+                network_buses_to_keep = plants_with_data.index
+                plants_to_keep = plants_with_data.to_numpy()
+
+                ror = ror.loc[ror.index.intersection(network_buses_to_keep)]
+                hydro = hydro.loc[hydro.index.intersection(network_buses_to_keep)]
+                # loss of p_nom
+                loss_p_nom = ror.p_nom.sum() + hydro.p_nom.sum() - total_p_nom
+
+                logger.warning(
+                    f"'{snakemake.input.profile_hydro}' is missing inflow time-series for at least one bus: {', '.join(missing_plants)}."
+                    f"Corresponding hydro plants are dropped, corresponding to a total loss of {loss_p_nom:.2f}MW out of {total_p_nom:.2f}MW."
+                )
+
+            # if there are any plants for which runoff data are available
+            if not plants_with_data.empty:
+                network_buses_to_keep = plants_with_data.index
+                plants_to_keep = plants_with_data.to_numpy()
+
+                inflow_t = (
+                    inflow.sel(plant=plants_to_keep)
+                    .rename({"plant": "name"})
+                    .assign_coords(name=network_buses_to_keep)
+                    .transpose("time", "name")
+                    .to_pandas()
+                )
+
             ##### section added to modify and attach inflow information to data sources (begin)
 
-            sddp_datas = snakemake.config["renewable"]["hydro"]["sddp_datas"]
-            if (sddp_datas==True):
+            external_inflow_data = snakemake.config["renewable"]["hydro"]["external_inflow_data"]
+            if (external_inflow_data==True):
                 inflow_t = modify_inflows(inflows_sddp,ppl,normalisation_factor = 0.9*(1-0.0748))           ####### 0.6 will make hydro match the output from 2020, and 1 provides an overstimation (need to explain why***)
             else:
                 inflow_t = (
-                    inflow.sel(plant=inflow_stations)
+                    inflow.sel(plant=inflow_buses)
                     .rename({"plant": "name"})
                     .assign_coords(name=inflow_idx)
                     .transpose("time", "name")
@@ -534,7 +578,6 @@ def attach_hydro(n, costs, ppl, inflows_sddp):        ##### section added to mod
                 )
             
             ##### section added to modify and attach inflow information to data sources (end)
-
 
     if "ror" in carriers and not ror.empty:
         n.madd(
@@ -572,13 +615,20 @@ def attach_hydro(n, costs, ppl, inflows_sddp):        ##### section added to mod
 
     if "hydro" in carriers and not hydro.empty:
         hydro_max_hours = c.get("hydro_max_hours")
-        hydro_stats = pd.read_csv(
-            snakemake.input.hydro_capacities, comment="#", na_values=["-"], index_col=0
+        hydro_stats = (
+            pd.read_csv(
+                snakemake.input.hydro_capacities,
+                comment="#",
+                na_values=["-"],
+                index_col=0,
+            )
+            .groupby("Country")
+            .sum()
         )
         e_target = hydro_stats["E_store[TWh]"].clip(lower=0.2) * 1e6
         e_installed = hydro.eval("p_nom * max_hours").groupby(hydro.country).sum()
         e_missing = e_target - e_installed
-        missing_mh_i = hydro.query("max_hours == 0").index
+        missing_mh_i = hydro.query("max_hours.isnull()").index
 
         if hydro_max_hours == "energy_capacity_totals_by_country":
             max_hours_country = (
@@ -590,6 +640,8 @@ def attach_hydro(n, costs, ppl, inflows_sddp):        ##### section added to mod
                 hydro_stats["E_store[TWh]"] * 1e3 / hydro_stats["p_nom_discharge[GW]"]
             )
 
+        max_hours_country.clip(lower=0, inplace=True)
+
         missing_countries = pd.Index(hydro["country"].unique()).difference(
             max_hours_country.dropna().index
         )
@@ -599,12 +651,13 @@ def attach_hydro(n, costs, ppl, inflows_sddp):        ##### section added to mod
                     ", ".join(missing_countries)
                 )
             )
+        hydro_max_hours_default = c.get("hydro_max_hours_default", 6.0)
         hydro_max_hours = hydro.max_hours.where(
             hydro.max_hours > 0, hydro.country.map(max_hours_country)
-        ).fillna(1300)
+        ).fillna(1300)  ##### Value changed from "hydro_max_hours_default" to "1300", based in average storage of dam hydros y Bolivia 
 
         n.madd(
-            "StorageUnit",          ##### 'StorageUnit' can be changed to 'Generator' so they can be recognized as powerplants
+            "StorageUnit",
             hydro.index,
             carrier="hydro",
             bus=hydro["bus"],
@@ -612,8 +665,8 @@ def attach_hydro(n, costs, ppl, inflows_sddp):        ##### section added to mod
             max_hours=hydro_max_hours,
             capital_cost=(
                 costs.at["hydro", "capital_cost"]
-            #    if c.get("hydro_capital_cost")
-            #    else 0.0
+                if c.get("hydro_capital_cost")
+                else 0.0
             ),
             marginal_cost=costs.at["hydro", "marginal_cost"],
             p_max_pu=1.0,  # dispatch
@@ -627,7 +680,7 @@ def attach_hydro(n, costs, ppl, inflows_sddp):        ##### section added to mod
 
 def attach_extendable_generators(n, costs, ppl):
     logger.warning("The function is deprecated with the next release")
-    elec_opts = snakemake.config["electricity"]
+    elec_opts = snakemake.params.electricity
     carriers = pd.Index(elec_opts["extendable_carriers"]["Generator"])
 
     _add_missing_carriers_from_costs(n, costs, carriers)
@@ -696,23 +749,20 @@ def attach_extendable_generators(n, costs, ppl):
             )
 
 
-def estimate_renewable_capacities_irena(n, config):
-    if not config["electricity"].get("estimate_renewable_capacities"):
-        return
-
-    stats = config["electricity"]["estimate_renewable_capacities"]["stats"]
+def estimate_renewable_capacities_irena(
+    n, estimate_renewable_capacities_config, countries_config
+):
+    stats = estimate_renewable_capacities_config["stats"]
     if not stats:
         return
 
-    year = config["electricity"]["estimate_renewable_capacities"]["year"]
-    tech_map = config["electricity"]["estimate_renewable_capacities"][
-        "technology_mapping"
-    ]
+    year = estimate_renewable_capacities_config["year"]
+    tech_map = estimate_renewable_capacities_config["technology_mapping"]
     tech_keys = list(tech_map.keys())
-    countries = config["countries"]
+    countries = countries_config
 
-    p_nom_max = config["electricity"]["estimate_renewable_capacities"]["p_nom_max"]
-    p_nom_min = config["electricity"]["estimate_renewable_capacities"]["p_nom_min"]
+    p_nom_max = estimate_renewable_capacities_config["p_nom_max"]
+    p_nom_min = estimate_renewable_capacities_config["p_nom_min"]
 
     if len(countries) == 0:
         return
@@ -819,47 +869,44 @@ if __name__ == "__main__":
 
     costs = load_costs(
         snakemake.input.tech_costs,
-        snakemake.config["costs"],
-        snakemake.config["electricity"],
+        snakemake.params.costs,
+        snakemake.params.electricity,
         Nyears,
     )
     ppl = load_powerplants(snakemake.input.powerplants)
 
-
     ##### section added to modify and attach inflow information to data sources (begin)
-
-
-    sddp_datas = snakemake.config["renewable"]["hydro"]["sddp_datas"]
-    if (sddp_datas==True):
-        inflows_sddp = load_inflows(snakemake.input.inflows_sddp)
+    
+    external_inflow_data = snakemake.config["renewable"]["hydro"]["external_inflow_data"]
+    if (external_inflow_data==True):
+        inflow_path = snakemake.config["renewable"]["hydro"]["inflow_data_path"]
+        inflows_sddp = pd.read_csv(inflow_path,sep=';', index_col=0)
     else :
         inflows_sddp = 0
     
+    ##### section added to modify and attach inflow information to data sources (begin)
 
-    ##### section added to modify and attach inflow information to data sources (end)
-
-
-    if "renewable_carriers" in snakemake.config["electricity"]:
-        renewable_carriers = set(snakemake.config["electricity"]["renewable_carriers"])
+    if "renewable_carriers" in snakemake.params.electricity:
+        renewable_carriers = set(snakemake.params.electricity["renewable_carriers"])
     else:
         logger.warning(
             "Missing key `renewable_carriers` under config entry `electricity`. "
             "In future versions, this will raise an error. "
             "Falling back to carriers listed under `renewable`."
         )
-        renewable_carriers = set(snakemake.config["renewable"])
+        renewable_carriers = set(snakemake.params.renewable)
 
-    extendable_carriers = snakemake.config["electricity"]["extendable_carriers"]
+    extendable_carriers = snakemake.params.electricity["extendable_carriers"]
     if not (set(renewable_carriers) & set(extendable_carriers["Generator"])):
         logger.warning(
             "No renewables found in config entry `extendable_carriers`. "
-            "In future versions, these have to be explicitely listed. "
+            "In future versions, these have to be explicitly listed. "
             "Falling back to all renewables."
         )
 
-    conventional_carriers = snakemake.config["electricity"]["conventional_carriers"]
+    conventional_carriers = snakemake.params.electricity["conventional_carriers"]
     attach_load(n, demand_profiles)
-    update_transmission_costs(n, costs, snakemake.config["lines"]["length_factor"])
+    update_transmission_costs(n, costs, snakemake.params.length_factor)
     conventional_inputs = {
         k: v for k, v in snakemake.input.items() if k.startswith("conventional_")
     }
@@ -869,7 +916,8 @@ if __name__ == "__main__":
         ppl,
         conventional_carriers,
         extendable_carriers,
-        snakemake.config.get("conventional", {}),
+        renewable_carriers,
+        snakemake.params.conventional,
         conventional_inputs,
     )
     attach_wind_and_solar(
@@ -879,14 +927,25 @@ if __name__ == "__main__":
         snakemake.input,
         renewable_carriers,
         extendable_carriers,
-        snakemake.config["lines"]["length_factor"],
+        snakemake.params.length_factor,
     )
-    attach_hydro(n, costs, ppl, inflows_sddp)    ##### section added to modify and attach inflow information to data sources
+    attach_hydro(n, costs, ppl)
 
-    estimate_renewable_capacities_irena(n, snakemake.config)
+    if snakemake.params.electricity.get("estimate_renewable_capacities"):
+        estimate_renewable_capacities_irena(
+            n,
+            snakemake.params.electricity["estimate_renewable_capacities"],
+            snakemake.params.countries,
+        )
 
     update_p_nom_max(n)
     add_nice_carrier_names(n, snakemake.config)
+
+    if not ("weight" in n.generators.columns):
+        logger.warning(
+            "Unexpected missing 'weight' column, which has been manually added. It may be due to missing generators."
+        )
+        n.generators["weight"] = pd.Series()
 
     n.meta = snakemake.config
     n.export_to_netcdf(snakemake.output[0])

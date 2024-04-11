@@ -161,7 +161,7 @@ electricity:
     H2: 168
 
   extendable_carriers:
-    Generator: [solar, biomass, geothermal, onwind] ## hydro is not extendable ##  offwind-ac & offwind-dc are removed  ## CCGT, OCGT are removed for scenario analysis
+    Generator: [solar, biomass, geothermal, onwind] ## hydro considers only planned powerplants              ##  offwind-ac & offwind-dc are removed  ## CCGT, OCGT are removed for scenario analysis
     StorageUnit: []  # battery, H2
     Store: [battery, H2]  
     Link: []  # H2 pipeline
@@ -311,8 +311,7 @@ renewable:
       method: hydro_capacities  # 'hydro_capacities' to rescale country hydro production by using hydro_capacities, 'eia' to rescale by eia data, false for no rescaling
       year: 2013  # (optional) year of statistics used to rescale the runoff time series. When not provided, the cutout weather year is used
     multiplier: 1.1  # multiplier applied after the normalization of the hydro production; default 1.0
-    external_inflow_data: True ###### section added to use local inflow data (True) or pypsa-calculated inflow data (False) used in the add_electricity script
-    inflow_data_path: C:\Users\Carlos\Desktop\PyPSA-BO\pypsa-earth\inflows_data\SDDP_scaledinflows_2013_newMegaHidro.csv ###### section added to provide a path for the use of local inflow data 
+    sddp_datas: True ###### section added to use local inflow data (True) or pypsa-calculated inflow data (False) used in the add_electricity script
 
 # TODO: Needs to be adjusted for Africa
 costs:
