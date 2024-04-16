@@ -1,2 +1,0 @@
-These are the files and scripts modified that have to be considered for running the Bolivian energy system as presented in the paper:
-A two-step cascade modelling between EnergyScope Pathway-BO and PyPSA-BO for energy transition planning. Part B: Geo-spatial characterization and effects
