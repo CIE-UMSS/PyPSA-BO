@@ -40,12 +40,35 @@ def download_file(url, output_file):
 
 '''Function to extract data from zip folder'''
 
-def extract_zip(zip_file, output_dir):
+def extract_zip(zip_file, output_directory):
+
+    # Check to see if the file already exists 
+    if os.path.exists("pypsa-bo/Precompiled_data"):
+        print(f"Unzipped file already exists. Skipping unzipping.")
+        return
 
     with zipfile.ZipFile(zip_file, "r") as zip_ref:
-        zip_ref.extractall(output_dir)
+        zip_ref.extractall(output_directory)
 
-    print(f"Extraction completed successfully to '{output_dir}'.")
+    print(f"Extraction completed successfully to '{output_directory}'.")
+
+
+
+'''Function to move extracted precompiled information to the submodule'''
+
+def move_data_to_submodule(data_dir, submodule_dir):
+    
+    # Remove the existing submodule directory if it exists
+    if os.path.exists(submodule_dir):
+        shutil.rmtree(submodule_dir)
+
+    # Copy the data to the submodule directory
+    if os.path.isdir(data_dir):  # Check if it's a directory
+        shutil.copytree(data_dir, submodule_dir)
+    else:  # It's a file
+        shutil.copy2(data_dir, submodule_dir)
+
+    
 
 
 
@@ -67,24 +90,16 @@ if __name__ == "__main__":
     # Ensure that the download directory exists
     os.makedirs(download_directory, exist_ok=True)
 
-    # Local directory to extract the files
-    extraction_dir = os.path.join(download_directory)
-
     # Extract the downloaded zip file
-    extract_zip(output_file_name, extraction_dir)
+    extract_zip(output_file_name, download_directory)
 
+    # Submodule directory
+    submodule_directory = "pypsa-bo/pypsa-earth"
 
-##### First test the correct download
+    # Move the data to the submodule directory
+    move_data_to_submodule(os.path.join(download_directory, "Precompiled_data", "inflows_data"), os.path.join(submodule_directory, "inflows_data"))
+    move_data_to_submodule(os.path.join(download_directory, "Precompiled_data", "data"), os.path.join(submodule_directory, "data"))
+    move_data_to_submodule(os.path.join(download_directory, "Precompiled_data", "resources"), os.path.join(submodule_directory, "resources"))
+    move_data_to_submodule(os.path.join(download_directory, "Precompiled_data", "cutouts"), os.path.join(submodule_directory, "cutouts"))
 
-# def move_data_to_submodule(data_dir, submodule_dir):
-#     # Create the destination directory if it doesn't exist
-#     os.makedirs(submodule_dir, exist_ok=True)
-
-#     # Move the data to the submodule directory
-#     shutil.move(data_dir, submodule_dir)
-
-#     # Submodule directory
-#     submodule_directory = "pypsa-bo/pypsa-earth"
-
-#     # Move the data to the submodule directory
-#     move_data_to_submodule(os.path.join(download_directory_name, "data"), submodule_directory)
+    
