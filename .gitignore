@@ -1,0 +1,8 @@
+
+# General untracked file formats
+*.log
+*.zip
+
+# Untracked folders (and files within)
+
+Precompiled_data/

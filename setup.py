@@ -2,41 +2,89 @@ import os
 import shutil
 import urllib.request
 import zipfile
+import requests
+from tqdm import tqdm
 
-def download_and_extract_data(url, download_dir):
-    # Create download directory if it doesn't exist
-    os.makedirs(download_dir, exist_ok=True)
 
-    # Download the data file
-    filename = os.path.join(download_dir, 'data.zip')
-    urllib.request.urlretrieve(url, filename)
+'''Function to download data from the zenodo repository'''
 
-    # Extract the downloaded zip file
-    with zipfile.ZipFile(filename, 'r') as zip_ref:
-        zip_ref.extractall(download_dir)
+def download_file(url, output_file):
 
-    # Remove the zip file after extraction
-    os.remove(filename)
+    # Check to see if the file already exists 
+    if os.path.exists(output_file):
+        print(f"File '{output_file}' already exists. Skipping download.")
+        return
+    
+    # Send a HEAD request to the server to get the file size
+    response = requests.head(url)
+    file_size = int(response.headers.get('content-length', 0))
+    print(f"File size: {file_size} bytes")
 
-def move_data_to_submodule(data_dir, submodule_dir):
-    # Create the destination directory if it doesn't exist
-    os.makedirs(submodule_dir, exist_ok=True)
+    # Make the request again, but this time use stream=True to download in chunks
+    response = requests.get(url, stream=True)
+    with open(output_file, 'wb') as f, tqdm(
+        total=file_size,
+        unit='B',
+        unit_scale=True,
+        desc=output_file,
+        ascii=True,
+    ) as pbar:
+        for chunk in response.iter_content(chunk_size=1024):
+            if chunk:
+                f.write(chunk)
+                pbar.update(len(chunk))
 
-    # Move the data to the submodule directory
-    shutil.move(data_dir, submodule_dir)
+    print("Download completed successfully.")
+
+
+
+'''Function to extract data from zip folder'''
+
+def extract_zip(zip_file, output_dir):
+
+    with zipfile.ZipFile(zip_file, "r") as zip_ref:
+        zip_ref.extractall(output_dir)
+
+    print(f"Extraction completed successfully to '{output_dir}'.")
+
+
+
+##### input definition #####
 
 if __name__ == "__main__":
-    # URL from which to download the data
-    data_url = "https://example.com/data.zip"
+    # Zenodo direct download link
+    zenodo_url = "https://zenodo.org/records/10979107/files/Precompiled_data.zip?download=1"
 
-    # Directory where the data will be downloaded
-    download_directory = "precompiled_data"
+    # Directory where the file will be downloaded (inside pypsa-bo folder)
+    download_directory = "pypsa-bo"
 
-    # Submodule directory
-    submodule_directory = "pypsa-bo/pypsa-earth"
+    # Local file path to save the downloaded file
+    output_file_name = os.path.join(download_directory, "Precompiled_data.zip")
 
-    # Download and extract the data
-    download_and_extract_data(data_url, download_directory)
+    # Download the file from Zenodo
+    download_file(zenodo_url, output_file_name)
 
-    # Move the data to the submodule directory
-    move_data_to_submodule(os.path.join(download_directory, "data"), submodule_directory)
+    # Ensure that the download directory exists
+    os.makedirs(download_directory, exist_ok=True)
+
+    # Local directory to extract the files
+    extraction_dir = os.path.join(download_directory)
+
+    # Extract the downloaded zip file
+    extract_zip(output_file_name, extraction_dir)
+
+
+##### First test the correct download
+
+# def move_data_to_submodule(data_dir, submodule_dir):
+#     # Create the destination directory if it doesn't exist
+#     os.makedirs(submodule_dir, exist_ok=True)
+
+#     # Move the data to the submodule directory
+#     shutil.move(data_dir, submodule_dir)
+
+#     # Submodule directory
+#     submodule_directory = "pypsa-bo/pypsa-earth"
+
+#     # Move the data to the submodule directory
+#     move_data_to_submodule(os.path.join(download_directory_name, "data"), submodule_directory)
