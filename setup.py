@@ -68,7 +68,22 @@ def move_data_to_submodule(data_dir, submodule_dir):
     else:  # It's a file
         shutil.copy2(data_dir, submodule_dir)
 
+
+'''Function to move specific files to the submodule'''
+
+def copy_file_to_submodule(file_path, submodule_dir):
+    # Get the filename from the file path
+    file_name = os.path.basename(file_path)
     
+    # Destination file path in the submodule directory
+    dest_file_path = os.path.join(submodule_dir, file_name)
+
+    # Remove the existing file if it exists
+    if os.path.exists(dest_file_path):
+        os.remove(dest_file_path)
+
+    # Copy the file to the submodule directory
+    shutil.copy2(file_path, dest_file_path)    
 
 
 
@@ -102,4 +117,21 @@ if __name__ == "__main__":
     move_data_to_submodule(os.path.join(download_directory, "Precompiled_data", "resources"), os.path.join(submodule_directory, "resources"))
     move_data_to_submodule(os.path.join(download_directory, "Precompiled_data", "cutouts"), os.path.join(submodule_directory, "cutouts"))
 
-    
+    print("Data was moved successfully")
+
+
+    # Submodule directory
+    modified_directory = "pypsa-bo/Modified_files"
+
+    # Move modfied files and scripts 
+    copy_file_to_submodule(os.path.join(modified_directory, "config.yaml"), os.path.join(submodule_directory))
+    copy_file_to_submodule(os.path.join(modified_directory, "config.default.yaml"), os.path.join(submodule_directory))
+
+    copy_file_to_submodule(os.path.join(modified_directory, "scripts", "add_electricity.py"), os.path.join(submodule_directory,"scripts"))
+    copy_file_to_submodule(os.path.join(modified_directory, "scripts", "cluster_network.py"), os.path.join(submodule_directory,"scripts"))
+    copy_file_to_submodule(os.path.join(modified_directory, "scripts", "simplify_network.py"), os.path.join(submodule_directory,"scripts"))
+    copy_file_to_submodule(os.path.join(modified_directory, "scripts", "solve_network.py"), os.path.join(submodule_directory,"scripts"))
+
+    copy_file_to_submodule(os.path.join(modified_directory, "envs", "environment.yaml"), os.path.join(submodule_directory,"envs"))
+
+    print("Modified files were copied successfully")
