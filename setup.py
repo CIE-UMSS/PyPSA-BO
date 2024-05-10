@@ -134,4 +134,12 @@ if __name__ == "__main__":
 
     copy_file_to_submodule(os.path.join(modified_directory, "envs", "environment.yaml"), os.path.join(submodule_directory,"envs"))
 
+
+    # Submodule directory
+    results_directory = "pypsa-bo/Results_analysis"
+
+    # Move modfied files and scripts 
+    copy_file_to_submodule(os.path.join(results_directory), os.path.join(submodule_directory,"Results_analysis"))
+
+
     print("Modified files were copied successfully")
