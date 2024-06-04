@@ -1,0 +1,11 @@
+check all jobs enabled in the config/snakemake file:
+	snakemake --dag solve_all_networks --forceall -n
+
+Update the config file and save it to a dot file:
+	snakemake --dag solve_all_networks --forceall > workflow.dot
+
+Open and delete the first lines in the file (usually it creates some registration linked to the solver)
+	the worklfow.dot file should start with the line "diagrpah snakemake_dag {"
+
+Create a png file based on the workflow.dot file:
+	dot workflow.dot -Tpng -o workflow.png 
