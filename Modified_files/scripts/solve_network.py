@@ -109,8 +109,8 @@ def prepare_network(n, solve_opts):
     if load_shedding:
         n.add("Carrier", "Load")
         buses_i = n.buses.query("carrier == 'AC'").index
-        if not np.isscalar(load_shedding):
-            load_shedding = 8e3  # Eur/kWh
+        #if not np.isscalar(load_shedding):
+        load_shedding = 1e2  # Eur/kWh
         # intersect between macroeconomic and surveybased
         # willingness to pay
         # http://journal.frontiersin.org/article/10.3389/fenrg.2015.00055/full)
@@ -358,20 +358,108 @@ def add_battery_constraints(n):
     )
     define_constraints(n, lhs, "=", 0, "Link", "charger_ratio")
 
-### extra constraint where p_nom_max is define for geothermal given it has a maximum potential defined exogenously 
+### extra constraints where p_nom_opt is defined by giving them a maximum potential (defined exogenously) 
+#Capacity expansion constraints based on resource availability
 def geothermal_capacity_constraint(n):
     geothermal_i = n.generators.query("carrier == 'geothermal'").index
     p_nom_current_geo = get_var(n, "Generator", "p_nom")[geothermal_i]
     lhs = linexpr((1, p_nom_current_geo)).sum()
-    rhs = n.generators.loc[geothermal_i,'p_nom'].sum() + 880
+    rhs = n.generators.loc[geothermal_i,'p_nom'].sum() + 880 #Maximum Geothermal potential MW in Bolivia
     define_constraints(n, lhs, '<=', rhs, 'Generator', 'new_geothermal_capacity')
+
+#Capacity expansion for flexible technologies defined by EnergyScope 
+def CCGT_capacity_constraint(n):
+    CCGT_i = n.generators.query("carrier == 'CCGT'").index
+    p_nom_current_CCGT = get_var(n, "Generator", "p_nom")[CCGT_i]
+    lhs = linexpr((1, p_nom_current_CCGT)).sum()
+    rhs = 124 #CCGT max potential MW based on EnergyScope limitation (378 first run and 359 fifth run)
+    define_constraints(n, lhs, '>=', rhs, 'Generator', 'new_CCGT_capacity')
+
+def OCGT_capacity_constraint(n):
+    OCGT_i = n.generators.query("carrier == 'OCGT'").index
+    p_nom_current_OCGT = get_var(n, "Generator", "p_nom")[OCGT_i]
+    lhs = linexpr((1, p_nom_current_OCGT)).sum()
+    rhs = 0.3 #OCGT max potential MW based on EnergyScope limitation (64 fifth run)
+    define_constraints(n, lhs, '>=', rhs, 'Generator', 'new_OCGT_capacity')
+
+def Oil_capacity_constraint(n):
+    Oil_i = n.generators.query("carrier == 'oil'").index
+    p_nom_current_Oil = get_var(n, "Generator", "p_nom")[Oil_i]
+    lhs = linexpr((1, p_nom_current_Oil)).sum()
+    rhs = 0.8 #Diesel max potential MW based on EnergyScope limitation (625 first run and 577 fifth run)
+    define_constraints(n, lhs, '>=', rhs, 'Generator', 'new_oil_capacity')
 
 def biomass_capacity_constraint(n):
     biomass_i = n.generators.query("carrier == 'biomass'").index
     p_nom_current_bio = get_var(n, "Generator", "p_nom")[biomass_i]
     lhs = linexpr((1, p_nom_current_bio)).sum()
-    rhs = n.generators.loc[biomass_i,'p_nom'].sum() + 847*2
-    define_constraints(n, lhs, '<=', rhs, 'Generator', 'new_biomass_capacity')
+    rhs = 718 #Biomass potential MW based on EnergyScope limitation (757 first run and 1134 fifth run) 
+    define_constraints(n, lhs, '>=', rhs, 'Generator', 'new_biomass_capacity')
+
+#Capacity expansion constraints based on EnergyScope boundary conditions
+def Wind_capacity_constraint(n):
+    Wind_i = n.generators.query("carrier == 'onwind'").index
+    p_nom_current_Wind = get_var(n, "Generator", "p_nom")[Wind_i]
+    lhs = linexpr((1, p_nom_current_Wind)).sum()
+    rhs = 7044 #Onshore wind max potential MW based on EnergyScope limitation (6632 first run and 2106 fifth run) 
+    define_constraints(n, lhs, '>=', rhs, 'Generator', 'new_wind_capacity')
+
+def Solar_capacity_constraint(n):
+    Solar_i = n.generators.query("carrier == 'solar'").index
+    p_nom_current_Solar = get_var(n, "Generator", "p_nom")[Solar_i]
+    lhs = linexpr((1, p_nom_current_Solar)).sum()
+    rhs = 22359 #Solar max potential MW based on EnergyScope limitation (7352 first run and 9454 fifth run) 
+    define_constraints(n, lhs, '>=', rhs, 'Generator', 'new_solar_capacity')
+
+#Operation expansion constraints
+def biomass_operation_constraint(n):
+    biomass_i = n.generators.query("carrier == 'biomass'").index
+    gen_biomass = get_var(n, "Generator", "p")[biomass_i]
+    lhs = linexpr((1, gen_biomass)).sum().sum()
+    biomass_limit = 5913941 #MWh potential resources for biomass-based generation (1402940 first run) (5606002 fifth run)
+    rhs = biomass_limit
+    define_constraints(n, lhs, '<=', rhs, 'Generator', 'total_biomass_generation')
+
+def OCGT_operation_constraint(n):
+    OCGT_i = n.generators.query("carrier == 'OCGT'").index
+    gen_OCGT = get_var(n, "Generator", "p")[OCGT_i]
+    lhs = linexpr((1, gen_OCGT)).sum().sum()
+    OCGT_limit = 200 #MWh potential resources for gas-based generation (25143 first run) (22958 fifth run)
+    rhs = OCGT_limit
+    define_constraints(n, lhs, '<=', rhs, 'Generator', 'total_OCGT_generation')
+
+def CCGT_operation_constraint(n):
+    CCGT_i = n.generators.query("carrier == 'CCGT'").index
+    gen_CCGT = get_var(n, "Generator", "p").loc[n.snapshots,CCGT_i]
+    lhs = linexpr((1, gen_CCGT)).sum().sum()
+    CCGT_limit = 518 #MWh potential resources for gas-based generation (156512 first run) (160344 fifth run)
+    rhs = CCGT_limit
+    define_constraints(n, lhs, '<=', rhs, 'Generator', 'total_gas_generation')
+
+def oil_operation_constraint(n):
+    oil_i = n.generators.query("carrier == 'oil'").index
+    gen_oil = get_var(n, "Generator", "p")[oil_i]
+    lhs = linexpr((1, gen_oil)).sum().sum()
+    oil_limit = 159 #MWh potential resources for gas-based generation (19078 first run) (26758 fifth run)
+    rhs = oil_limit
+    define_constraints(n, lhs, '<=', rhs, 'Generator', 'total_oil_generation')
+
+def battery_operation_constraint(n):
+    battery_i = n.stores.query("carrier == 'battery'").index
+    gen_battery = get_var(n, "Store", "e_nom")[battery_i]
+    #gen_battery = abs(gen_battery)
+    lhs = linexpr((1, gen_battery)).sum()
+    battery_limit = 60060 #MWh potential resources for battery storage based on EVs (8016 for 1st run) (8071 second run)
+    rhs = battery_limit
+    define_constraints(n, lhs, '>=', rhs, 'Generator', 'total_battery_capacity')
+
+def load_sheeding_constraint(n):
+    LS_i = n.generators.query("carrier == 'load'").index
+    gen_LS = get_var(n, "Generator", "p")[LS_i]
+    lhs = linexpr((1, gen_LS)).sum().sum()
+    LS_limit = 100000 #MWh potential resources for gas-based generation (19078 first run) (26758 fifth run)
+    rhs = LS_limit
+    define_constraints(n, lhs, '<=', rhs, 'Generator', 'load_shedding_generation')
 
 ### extra constraint where p_nom_opt is set to be at least p_nom to avoid negative expansion
 
@@ -530,6 +618,32 @@ def extra_functionality(n, snapshots):
     biomass_i = n.generators.query("carrier == 'biomass'").index
     if not biomass_i.empty:
         biomass_capacity_constraint(n)
+        biomass_operation_constraint(n)
+    wind_i = n.generators.query("carrier == 'onwind'").index
+    if not wind_i.empty:
+        Wind_capacity_constraint(n)
+    solar_i = n.generators.query("carrier == 'solar'").index
+    if not solar_i.empty:
+        Solar_capacity_constraint(n)
+    OCGT_i = n.generators.query("carrier == 'OCGT'").index
+    if not OCGT_i.empty:
+        OCGT_operation_constraint(n)
+        OCGT_capacity_constraint(n)
+    CCGT_i = n.generators.query("carrier == 'CCGT'").index
+    if not CCGT_i.empty:
+        CCGT_operation_constraint(n)
+        CCGT_capacity_constraint(n)
+    oil_i = n.generators.query("carrier == 'oil'").index
+    if not oil_i.empty:
+        oil_operation_constraint(n)
+        Oil_capacity_constraint(n)
+    battery_i = n.stores.query("carrier == 'battery'").index
+    if not battery_i.empty:
+        battery_operation_constraint(n)
+    loadshedding_i = n.stores.query("carrier == 'load'").index
+    if not loadshedding_i.empty:
+        load_sheeding_constraint(n)
+    
 
 
 def solve_network(n, config, opts="", **kwargs):
@@ -574,7 +688,7 @@ if __name__ == "__main__":
         snakemake = mock_snakemake(
             "solve_network",
             simpl="",
-            clusters="54",
+            clusters="4",
             ll="copt",
             opts="Co2L-1H",
         )

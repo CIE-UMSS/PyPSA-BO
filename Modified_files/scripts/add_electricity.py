@@ -567,7 +567,7 @@ def attach_hydro(n, costs, ppl):
 
             external_inflow_data = snakemake.config["renewable"]["hydro"]["external_inflow_data"]
             if (external_inflow_data==True):
-                inflow_t = modify_inflows(inflows_sddp,ppl,normalisation_factor = 0.9*(1-0.0748))           ####### 0.6 will make hydro match the output from 2020, and 1 provides an overstimation (need to explain why***)
+                inflow_t = modify_inflows(inflows_sddp,ppl,normalisation_factor = 0.9*(1-0.0748))           ####### 1 provides an overstimation (need to explain why***)
             else:
                 inflow_t = (
                     inflow.sel(plant=inflow_buses)
@@ -654,7 +654,7 @@ def attach_hydro(n, costs, ppl):
         hydro_max_hours_default = c.get("hydro_max_hours_default", 6.0)
         hydro_max_hours = hydro.max_hours.where(
             hydro.max_hours > 0, hydro.country.map(max_hours_country)
-        ).fillna(1300)  ##### Value changed from "hydro_max_hours_default" to "1300", based in average storage of dam hydros y Bolivia 
+        ).fillna(1530*0.8767)  ##### Value changed from "hydro_max_hours_default" to "1034.7", based in average storage of dam hydros y Bolivia 
 
         n.madd(
             "StorageUnit",
@@ -674,7 +674,7 @@ def attach_hydro(n, costs, ppl):
             efficiency_dispatch=costs.at["hydro", "efficiency"],
             efficiency_store=0.0,
             cyclic_state_of_charge=True,
-            inflow=inflow_t.loc[:, hydro.index],
+            inflow=inflow_t.loc[:, hydro.index]*0.7, # this 0.7 factor is used to average inflows for reservoir units match the national average output
         )
 
 

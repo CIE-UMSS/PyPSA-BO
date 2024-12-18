@@ -131,6 +131,9 @@ if __name__ == "__main__":
     copy_file_to_submodule(os.path.join(modified_directory, "scripts", "cluster_network.py"), os.path.join(submodule_directory,"scripts"))
     copy_file_to_submodule(os.path.join(modified_directory, "scripts", "simplify_network.py"), os.path.join(submodule_directory,"scripts"))
     copy_file_to_submodule(os.path.join(modified_directory, "scripts", "solve_network.py"), os.path.join(submodule_directory,"scripts"))
+    copy_file_to_submodule(os.path.join(modified_directory, "scripts", "add_extra_components.py"), os.path.join(submodule_directory,"scripts"))
+    copy_file_to_submodule(os.path.join(modified_directory, "scripts", "build_renewable_profiles.py"), os.path.join(submodule_directory,"scripts"))
+    copy_file_to_submodule(os.path.join(modified_directory, "scripts", "prepare_network.py"), os.path.join(submodule_directory,"scripts"))
 
     copy_file_to_submodule(os.path.join(modified_directory, "envs", "environment.yaml"), os.path.join(submodule_directory,"envs"))
 
