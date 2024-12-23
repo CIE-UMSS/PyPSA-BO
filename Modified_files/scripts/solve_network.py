@@ -615,34 +615,34 @@ def extra_functionality(n, snapshots):
     geothermal_i = n.generators.query("carrier == 'geothermal'").index
     if not geothermal_i.empty:
         geothermal_capacity_constraint(n)
-    biomass_i = n.generators.query("carrier == 'biomass'").index
-    if not biomass_i.empty:
-        biomass_capacity_constraint(n)
-        biomass_operation_constraint(n)
-    wind_i = n.generators.query("carrier == 'onwind'").index
-    if not wind_i.empty:
-        Wind_capacity_constraint(n)
-    solar_i = n.generators.query("carrier == 'solar'").index
-    if not solar_i.empty:
-        Solar_capacity_constraint(n)
-    OCGT_i = n.generators.query("carrier == 'OCGT'").index
-    if not OCGT_i.empty:
-        OCGT_operation_constraint(n)
-        OCGT_capacity_constraint(n)
-    CCGT_i = n.generators.query("carrier == 'CCGT'").index
-    if not CCGT_i.empty:
-        CCGT_operation_constraint(n)
-        CCGT_capacity_constraint(n)
-    oil_i = n.generators.query("carrier == 'oil'").index
-    if not oil_i.empty:
-        oil_operation_constraint(n)
-        Oil_capacity_constraint(n)
-    battery_i = n.stores.query("carrier == 'battery'").index
-    if not battery_i.empty:
-        battery_operation_constraint(n)
-    loadshedding_i = n.stores.query("carrier == 'load'").index
-    if not loadshedding_i.empty:
-        load_sheeding_constraint(n)
+    # biomass_i = n.generators.query("carrier == 'biomass'").index
+    # if not biomass_i.empty:
+    #     biomass_capacity_constraint(n)
+    #     biomass_operation_constraint(n)
+    # wind_i = n.generators.query("carrier == 'onwind'").index
+    # if not wind_i.empty:
+    #     Wind_capacity_constraint(n)
+    # solar_i = n.generators.query("carrier == 'solar'").index
+    # if not solar_i.empty:
+    #     Solar_capacity_constraint(n)
+    # OCGT_i = n.generators.query("carrier == 'OCGT'").index
+    # if not OCGT_i.empty:
+    #     OCGT_operation_constraint(n)
+    #     OCGT_capacity_constraint(n)
+    # CCGT_i = n.generators.query("carrier == 'CCGT'").index
+    # if not CCGT_i.empty:
+    #     CCGT_operation_constraint(n)
+    #     CCGT_capacity_constraint(n)
+    # oil_i = n.generators.query("carrier == 'oil'").index
+    # if not oil_i.empty:
+    #     oil_operation_constraint(n)
+    #     Oil_capacity_constraint(n)
+    # battery_i = n.stores.query("carrier == 'battery'").index
+    # if not battery_i.empty:
+    #     battery_operation_constraint(n)
+    # loadshedding_i = n.stores.query("carrier == 'load'").index
+    # if not loadshedding_i.empty:
+    #     load_sheeding_constraint(n)
     
 
 
