@@ -1,9 +1,6 @@
 # SPDX-FileCopyrightText:  PyPSA-Earth and PyPSA-Eur Authors
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
-#
-# Modified snakefile to run custom scripts for Bolivia
-#
 
 import sys
 
@@ -460,6 +457,7 @@ rule build_renewable_profiles:
         regions=lambda w: (
             "resources/" + RDIR + "bus_regions/regions_onshore.geojson"
             if w.technology in ("onwind", "solar", "hydro")
+            #if w.technology in ("onwind", "solar", "onwind2", "solar2", "hydro") #section changed to create new profiles per alternative technologies solar/wind
             else "resources/" + RDIR + "bus_regions/regions_offshore.geojson"
         ),
         cutout=lambda w: "cutouts/"

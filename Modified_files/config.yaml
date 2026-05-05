@@ -40,7 +40,7 @@ run:
 scenario:
   simpl: ['']
   ll: ['copt']
-  clusters: [4]
+  clusters: [15]
   opts: [Co2L-1H]
 
 summary_dir: results
@@ -141,10 +141,10 @@ load_options:
   scale: 9.42  ###### expected demand in 2050 is 93.941 TWh according to paper ECOS2024 partA
 
 electricity:
-  base_voltage: 380.
-  voltages: [220., 300., 380.]
-  co2limit: 1.487e+9
-  co2base: 1.487e+9
+  base_voltage: 220.
+  voltages: [69., 110., 220., 380.]
+  co2limit: 0.126328e+7 ### base units are [ton] - according to EnergyScope projections: ECEMP 1072 ktonCO2 (1st run) / 1.105 (5th run)
+  co2base: 9.999e+9   #### according to EnergyScope projections - ECEMP
   agg_p_nom_limits: data/agg_p_nom_minmax.csv
   hvdc_as_lines: false  # should HVDC lines be modeled as `Line` or as `Link` component?
   automatic_emission: false ### true
@@ -157,20 +157,20 @@ electricity:
     contingency: 0 # fixed capacity in MW
 
   max_hours:
-    battery: 6
+    battery: 8.33 #previously 6
     H2: 168
 
   extendable_carriers:
-    Generator: [solar, biomass, geothermal, onwind] ## hydro is not extendable ##  offwind-ac & offwind-dc are removed  ## CCGT, OCGT are removed for scenario analysis
+    Generator: [solar, biomass, geothermal, onwind, nuclear, oil, OCGT, CCGT] ## hydro is not extendable ##  offwind-ac & offwind-dc are removed #### , solar2, onwind2 are commented out for now (can be used for other tests)
     StorageUnit: []  # battery, H2
-    Store: [battery, H2]  
+    Store: [battery] # H2  
     Link: []  # H2 pipeline
 
   powerplants_filter: # (DateOut >= 2022 or DateOut != DateOut)
   custom_powerplants: replace  #  "false" use only powerplantmatching (ppm) data, "merge" combines ppm and custom powerplants, "replace" use only custom powerplants
 
   conventional_carriers: [nuclear, oil, OCGT, CCGT, coal, lignite, geothermal, biomass]
-  renewable_carriers: [solar, onwind, hydro]          ## offwind-ac, offwind-dc, are removed
+  renewable_carriers: [solar, onwind, hydro]          # # offwind-ac, offwind-dc, are removed #### , solar2, onwind2 are commented out for now (caqn be used for other tests)
 
   estimate_renewable_capacities:
     stats: False # False, = greenfield expansion, 'irena' uses IRENA stats to add expansion limits
@@ -183,13 +183,20 @@ electricity:
       Onshore: [onwind]
       PV: [solar]
 lines:
-  ac_types:
-    132.: "243-AL1/39-ST1A 20.0"
-    220.: "Al/St 240/40 2-bundle 220.0"
-    300.: "Al/St 240/40 3-bundle 300.0"
-    380.: "Al/St 240/40 4-bundle 380.0"
+  ac_types: 
+    69.: "N2XS(FL)2Y 1x120 RM/35 64/110 kV"
+    110.: "305-AL1/39-ST1A 110.0"
+    220.: "305-AL1/39-ST1A 110.0"
+    380.: "Al/St 240/40 2-bundle 220.0"
     500.: "Al/St 240/40 4-bundle 380.0"
-    750.: "Al/St 560/50 4-bundle 750.0"
+    # 69.: "N2XS(FL)2Y 1x120 RM/35 64/110 kV"
+    # 110.: "243-AL1/39-ST1A 110.0"
+    # 132.: "243-AL1/39-ST1A 20.0"
+    # 220.: "Al/St 240/40 2-bundle 220.0"
+    # 300.: "Al/St 240/40 3-bundle 300.0"
+    # 380.: "Al/St 240/40 4-bundle 380.0"
+    # 500.: "Al/St 240/40 4-bundle 380.0"
+    # 750.: "Al/St 560/50 4-bundle 750.0"
   dc_types:
     500.: "HVDC XLPE 1000"
   s_max_pu: 0.7
@@ -230,7 +237,7 @@ renewable:
       method: wind
       turbine: Vestas_V112_3MW
     capacity_per_sqkm: 3 # ScholzPhd Tab 4.3.1: 10MW/km^2
-    # correction_factor: 0.93
+    correction_factor: 1 # correction factor for matching the maximum capacity factor (0.36) in current system (1.4 for 116 nodes) (2.4 for 4 nodes)
     copernicus:
       # Scholz, Y. (2012). Renewable energy based electricity supply at low costs:
       #  development of the REMix model and application for Europe. ( p.42 / p.28)
@@ -241,6 +248,34 @@ renewable:
     potential: simple # or conservative
     clip_p_max_pu: 1.e-2
     extendable: true
+    #New section to allow MSR data usage to correct wind availability profiles
+    use_msr_wind: true
+    msr:
+      wind_csv: C:\Users\Carlos\Desktop\PyPSA-BO\pypsa-earth\data\MSR_data\Bolivia wind 100m BiasCorrected ResourceProfiles.csv
+      wind_geojson: C:\Users\Carlos\Desktop\PyPSA-BO\pypsa-earth\data\MSR_data\Wind_prescreen.geojson
+      power_curve: C:\Users\Carlos\Desktop\PyPSA-BO\pypsa-earth\data\MSR_data\Wind speed IEC Classes.csv
+      aggregation: "top_percent"   # options: "weighted", "top_percent"
+      top_percent: 0.05
+
+
+  # onwind2:
+  #   cutout: southamerica-2013-era5
+  #   resource:
+  #     method: wind
+  #     turbine: Vestas_V112_3MW
+  #   capacity_per_sqkm: 3 # ScholzPhd Tab 4.3.1: 10MW/km^2
+  #   correction_factor: 2.4 # correction factor for matching the maximum capacity factor (0.36) in current system (1.4 for 116 nodes) (2.4 for 4 nodes)
+  #   copernicus:
+  #     # Scholz, Y. (2012). Renewable energy based electricity supply at low costs:
+  #     #  development of the REMix model and application for Europe. ( p.42 / p.28)
+  #     grid_codes: [20, 30, 40, 60, 100, 111, 112, 113, 114, 115, 116, 121, 122, 123, 124, 125, 126]
+  #     distance: 1000
+  #     distance_grid_codes: [50]
+  #   natura: true
+  #   potential: simple # or conservative
+  #   clip_p_max_pu: 1.e-2
+  #   extendable: true
+    
 ##  offwind-ac:
 ##    cutout: southamerica-2013-era5
 ##    resource:
@@ -272,6 +307,7 @@ renewable:
 ##    potential: simple # or conservative
 ##    clip_p_max_pu: 1.e-2
 ##    extendable: true
+
   solar:
     cutout: southamerica-2013-era5
     resource:
@@ -286,13 +322,36 @@ renewable:
     # Pietzcker, Robert Carl, et al. "Using the sun to decarbonize the power
     # sector: The economic potential of photovoltaics and concentrating solar
     # power." Applied Energy 135 (2014): 704-720.
-    correction_factor: 0.854337
+    correction_factor: 0.99 #0.854337
     copernicus:
       grid_codes: [20, 30, 40, 50, 60, 90, 100]
     natura: true
     potential: simple # or conservative
     clip_p_max_pu: 1.e-2
     extendable: true
+
+  # solar2:
+  #   cutout: southamerica-2013-era5
+  #   resource:
+  #     method: pv
+  #     panel: CSi
+  #     orientation: latitude_optimal # will lead into optimal design
+  #       # slope: 0.  # slope: 0 represent a flat panel
+  #       # azimuth: 180.  # azimuth: 180 south orientation
+  #   capacity_per_sqkm: 4.6 # From 1.7 to 4.6 addresses issue #361
+  #   # Determined by comparing uncorrected area-weighted full-load hours to those
+  #   # published in Supplementary Data to
+  #   # Pietzcker, Robert Carl, et al. "Using the sun to decarbonize the power
+  #   # sector: The economic potential of photovoltaics and concentrating solar
+  #   # power." Applied Energy 135 (2014): 704-720.
+  #   correction_factor: 0.99 #0.854337
+  #   copernicus:
+  #     grid_codes: [20, 30, 40, 50, 60, 90, 100]
+  #   natura: true
+  #   potential: simple # or conservative
+  #   clip_p_max_pu: 1.e-2
+  #   extendable: true
+
   hydro:
     cutout: southamerica-2013-era5
     hydrobasins_level: 4
@@ -308,11 +367,11 @@ renewable:
     hydro_max_hours_default: 6.0  # (optional, default 6) Default value of max_hours for hydro when NaN values are found
     clip_min_inflow: 1.0
     normalization:
-      method: hydro_capacities  # 'hydro_capacities' to rescale country hydro production by using hydro_capacities, 'eia' to rescale by eia data, false for no rescaling
+      method: eia  # 'hydro_capacities' to rescale country hydro production by using hydro_capacities, 'eia' to rescale by eia data, false for no rescaling
       year: 2013  # (optional) year of statistics used to rescale the runoff time series. When not provided, the cutout weather year is used
     multiplier: 1.1  # multiplier applied after the normalization of the hydro production; default 1.0
     external_inflow_data: True ###### section added to use local inflow data (True) or pypsa-calculated inflow data (False) used in the add_electricity script
-    inflow_data_path: C:\Users\Carlos\Desktop\PyPSA-BO\pypsa-earth\inflows_data\SDDP_scaledinflows_2013_newMegaHidro.csv ###### section added to provide a path for the use of local inflow data 
+    inflow_data_path: C:\Users\Carlos\Desktop\PyPSA-BO\pypsa-earth\inflows_data\SDDP_scaledinflows_2013_newplants.csv ###### section added to provide a path for the use of local inflow data (new plants copy the inflow stats of the nearest plant)
 
 # TODO: Needs to be adjusted for Africa
 costs:
@@ -331,7 +390,9 @@ costs:
     discount rate: 0.07
   marginal_cost: # EUR/MWh
     solar: 0.01
+    #solar2: 0.01
     onwind: 0.015
+    #onwind2: 0.015
     offwind: 0.015
     hydro: 0.
     H2: 0.
@@ -422,6 +483,7 @@ plotting:
   link_carriers: ["DC line", "Converter AC-DC"]
   tech_colors:
     "onwind": "#235ebc"
+    "onwind2": "#235ebc"
     "onshore wind": "#235ebc"
     "offwind": "#6895dd"
     "offwind-ac": "#6895dd"
@@ -437,6 +499,7 @@ plotting:
     "ror": "#4adbc8"
     "run of river": "#4adbc8"
     "solar": "#f9d002"
+    "solar2": "#f9d002"
     "solar PV": "#f9d002"
     "solar thermal": "#ffef60"
     "biomass": "#0c6013"
@@ -472,10 +535,13 @@ plotting:
     offwind-ac: "Offshore Wind (AC)"
     offwind-dc: "Offshore Wind (DC)"
     onwind: "Onshore Wind"
+    onwind2: "Onshore Wind2"
     solar: "Solar"
+    solar2: "Solar2"
     PHS: "Pumped Hydro Storage"
     hydro: "Reservoir & Dam"
     battery: "Battery Storage"
     H2: "Hydrogen Storage"
     lines: "Transmission Lines"
     ror: "Run of River"
+
