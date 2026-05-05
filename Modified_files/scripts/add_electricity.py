@@ -182,6 +182,11 @@ def load_costs(tech_costs, config, elec_config, Nyears=1):
         + (1 - config["rooftop_share"]) * costs.at["solar-utility", "capital_cost"]
     )
 
+    # costs.at["solar2", "capital_cost"] = (
+    #     config["rooftop_share"] * costs.at["solar-rooftop", "capital_cost"]
+    #     + (1 - config["rooftop_share"]) * costs.at["solar-utility", "capital_cost"]
+    # )
+
     def costs_for_storage(store, link1, link2=None, max_hours=1.0):
         capital_cost = link1["capital_cost"] + max_hours * store["capital_cost"]
         if link2 is not None:
@@ -330,6 +335,9 @@ def attach_wind_and_solar(
 
         df.carrier.mask(df.technology == "Onshore", "onwind", inplace=True)
 
+        #Added section to include new replicated technologies for Solar and wind 
+        #clean_name = tech.rstrip("0123456789")
+        #with xr.open_dataset(getattr(input_files, "profile_" + clean_name)) as ds:
         with xr.open_dataset(getattr(input_files, "profile_" + tech)) as ds:
             if ds.indexes["bus"].empty:
                 continue
@@ -654,7 +662,7 @@ def attach_hydro(n, costs, ppl):
         hydro_max_hours_default = c.get("hydro_max_hours_default", 6.0)
         hydro_max_hours = hydro.max_hours.where(
             hydro.max_hours > 0, hydro.country.map(max_hours_country)
-        ).fillna(1530*0.8767)  ##### Value changed from "hydro_max_hours_default" to "1034.7", based in average storage of dam hydros y Bolivia 
+        ).fillna(3281*0.8767)  ##### Value changed from "hydro_max_hours_default" to "1034.7"=1530*0.8767, based in average storage of dam hydros y Bolivia by 2025 - Values for other years are 4127 (2035), 3282 (2040), 3162 (2045) and 3048 (2050)
 
         n.madd(
             "StorageUnit",
@@ -674,7 +682,7 @@ def attach_hydro(n, costs, ppl):
             efficiency_dispatch=costs.at["hydro", "efficiency"],
             efficiency_store=0.0,
             cyclic_state_of_charge=True,
-            inflow=inflow_t.loc[:, hydro.index]*0.7, # this 0.7 factor is used to average inflows for reservoir units match the national average output
+            inflow=inflow_t.loc[:, hydro.index]*1.0, # 0.7 factor was used to average inflows for reservoir units match the national average output (1.0 is used considering only existing plants)
         )
 
 
