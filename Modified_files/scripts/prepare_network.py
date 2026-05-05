@@ -194,7 +194,10 @@ def set_transmission_limit(n, ll_type, factor, costs, Nyears=1):
         * n.lines.num_parallel
         * n.lines.bus0.map(n.buses.v_nom)
     )
-    lines_s_nom = n.lines.s_nom.where(n.lines.type == "", _lines_s_nom)
+
+    # ORIGINAL — ignores stored s_nom, recomputes from scratch for all non-standard typed lines based on v_nom from buses instead of lines: -> lines_s_nom = n.lines.s_nom.where(n.lines.type == "", _lines_s_nom)
+    # FIXED — uses stored s_nom whenever it's a valid positive value:
+    lines_s_nom = n.lines.s_nom.where(n.lines.s_nom > 0, _lines_s_nom)
 
     col = "capital_cost" if ll_type == "c" else "length"
     ref = (
