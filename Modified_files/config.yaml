@@ -170,7 +170,7 @@ electricity:
   custom_powerplants: replace  #  "false" use only powerplantmatching (ppm) data, "merge" combines ppm and custom powerplants, "replace" use only custom powerplants
 
   conventional_carriers: [nuclear, oil, OCGT, CCGT, coal, lignite, geothermal, biomass]
-  renewable_carriers: [solar, onwind, hydro]          # # offwind-ac, offwind-dc, are removed #### , solar2, onwind2 are commented out for now (caqn be used for other tests)
+  renewable_carriers: [solar, onwind, hydro]          # # offwind-ac, offwind-dc, are removed #### , solar2, onwind2 are commented out for now (used in cost-supply analysis)
 
   estimate_renewable_capacities:
     stats: False # False, = greenfield expansion, 'irena' uses IRENA stats to add expansion limits
@@ -329,6 +329,14 @@ renewable:
     potential: simple # or conservative
     clip_p_max_pu: 1.e-2
     extendable: true
+    #New section to allow MSR data usage to correct solar availability profiles
+    use_msr_solar: true
+    msr:
+      solar_csv: C:\Users\Carlos\Desktop\PyPSA-BO\pypsa-earth\data\MSR_data\Bolivia solarpv BiasCorrected ResourceProfiles.csv 
+      solar_geojson: C:\Users\Carlos\Desktop\PyPSA-BO\pypsa-earth\data\MSR_data\SolarPV_prescreen.geojson
+      efficiency: 0.92    # based on value used on MSR model
+      aggregation: "top_percent"   # options: "weighted", "top_percent"
+      top_percent: 0.05
 
   # solar2:
   #   cutout: southamerica-2013-era5

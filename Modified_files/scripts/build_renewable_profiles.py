@@ -485,12 +485,573 @@ def rescale_hydro(plants, runoff, normalize_using_yearly, normalization_year):
     return runoff
 
 
+def apply_msr_wind_profiles(resources, msr_cfg, buses):
+    """
+    Override PyPSA wind profiles with MSR-derived wind availability.
+
+    Parameters
+    ----------
+    resources : xr.Dataset
+        In-memory PyPSA wind resource dataset (already built).
+    msr_cfg : dict
+        Dictionary with keys:
+        - wind_csv
+        - wind_geojson
+        - power_curve
+        - aggregation 
+        - top_percent
+
+    Returns
+    -------
+    xr.Dataset
+        Updated resources dataset.
+    """
+
+    resources = resources.copy(deep=True)
+
+    # ------------------------------------------------------------------
+    # 1. Load MSR inputs
+    # ------------------------------------------------------------------
+
+    df_ws = pd.read_csv(msr_cfg["wind_csv"]) #Wind speed profiles for each MSR
+    gdf = gpd.read_file(msr_cfg["wind_geojson"]) #MSR regions identified wind exploitable wind
+    pc = pd.read_csv(msr_cfg["power_curve"]) #Transformation profiles from windspeed to capacity/availability factors
+    aggregation = msr_cfg["aggregation"]
+    top_percent = msr_cfg["top_percent"]
+
+    # ------------------------------------------------------------------
+    # 2. Reformating datasets
+    # ------------------------------------------------------------------
+    
+    profile_cols = [c for c in df_ws.columns if c.startswith("H")]
+    df_long = (
+    df_ws[["MSR_ID"] + profile_cols]
+    .melt(id_vars="MSR_ID", var_name="hour", value_name="profile")
+    )
+    df_long["time"] = df_long["hour"].str.replace("H", "").astype(int) - 1
+
+    #convert to xarray
+    xr_msr = (
+        df_long
+        .set_index(["time", "MSR_ID"])
+        .to_xarray()
+    )
+
+    #Add parameters from the shapes file into the new xarray 
+    xr_msr["p_nom_max"] = ("MSR_ID", gdf.set_index("FID")["CapacityMW"])
+    xr_msr["CAPEX"] = ("MSR_ID", gdf.set_index("FID")["trCAPEX-kW"])
+    xr_msr["AreakM2"] = ("MSR_ID", gdf.set_index("FID")["AreakM2"])
+
+    xr_msr["weight"] = ("MSR_ID", np.ones(len(xr_msr.MSR_ID)))
+
+    #Check coordinated for each MSR
+    msr_coor = pd.DataFrame()
+
+    msr_coor["MSR_ID"] = gdf["FID"]
+    msr_coor["lon"] = gdf.geometry.centroid.x
+    msr_coor["lat"] = gdf.geometry.centroid.y
+
+    msr_coor = msr_coor.rename({"FID":"MSR_ID"})
+
+    #Add coordinates of each MSR
+    xr_msr = xr_msr.assign_coords(
+        lat=("MSR_ID", msr_coor["lat"].values),
+        lon=("MSR_ID", msr_coor["lon"].values),)
+
+
+    # ------------------------------------------------------------------
+    # 3. Build MSR xarray dataset
+    # ------------------------------------------------------------------
+
+    # creating MSR map from centroids
+    gdf_msr_pts = gpd.GeoDataFrame(
+        msr_coor,
+        geometry=gpd.points_from_xy(msr_coor.lon, msr_coor.lat),
+        crs="EPSG:4326"
+    )
+
+    gdf_buses = gpd.GeoDataFrame(
+        buses.copy(),
+        geometry=gpd.points_from_xy(buses.x, buses.y),
+        crs="EPSG:4326"
+    )
+
+    # reprojecting (for distances?)
+    gdf_msr_pts = gdf_msr_pts.to_crs(3857)
+    gdf_buses = gdf_buses.to_crs(3857)
+
+    #Assign a bus to each MSR
+    msr_to_bus = gpd.sjoin_nearest(
+        gdf_msr_pts,
+        gdf_buses[["geometry"]],
+        how="left"
+    )
+
+    # clean columns
+    msr_to_bus = (
+        msr_to_bus
+        .reset_index(drop=True)
+        .rename(columns={"index": "MSR_ID", "index_right": "bus"})
+    )
+
+    #create data set of equivalence MSR-bus
+    bus_map = (
+        msr_to_bus
+        .set_index("MSR_ID")
+        .loc[xr_msr.MSR_ID.values, "bus"]
+        .astype(str)
+    )
+
+    #Add bus as coordinate in the xarray
+    xr_msr = xr_msr.assign_coords(
+        bus=("MSR_ID", bus_map.values)
+    )
+
+
+    # ------------------------------------------------------------------
+    # 4. Aggregate data for each bus
+    # ------------------------------------------------------------------
+
+    if aggregation == "weighted":
+
+        #Estimate aggregated values per bus (with wighted averages based on surface=AreakM2 or cost=CAPEX)
+        bus_weight = xr_msr["AreakM2"] # or xr_msr["CAPEX"]
+
+        num = (xr_msr["profile"] * bus_weight).groupby("bus").sum(dim="MSR_ID")
+        den = bus_weight.groupby("bus").sum(dim="MSR_ID")
+
+        xr_bus_profile = num / den
+
+        p_nom_bus = xr_msr["p_nom_max"].groupby("bus").sum(dim="MSR_ID")
+
+        capex_bus = ((xr_msr["CAPEX"] * xr_msr["AreakM2"]).groupby("bus").sum(dim="MSR_ID")/den)
+
+    elif aggregation == "top_percent":
+
+        # Identify best MSRs within each bus (resource quality metric: mean windspeed="profile" or cost="CAPEX")
+        quality = xr_msr["CAPEX"] # xr_msr["profile"].mean("time") --- if quality metric is the mean windspeed, otherwise if it is the cost, we take directly the CAPEX value
+
+        selected_ids = []
+
+        for bus in np.unique(xr_msr.bus.values):
+
+            bus_mask = xr_msr.bus == bus
+            bus_quality = quality.where(bus_mask, drop=True)
+
+            # New version where the capacity of the MSR is taken into account to select the best MSR until a certain cumulative capacity threshold is reached (cost supply curve)
+            bus_capacity = xr_msr["p_nom_max"].where(bus_mask, drop=True)
+
+            # Sort by quality (CAPEX) descending (best quality first)
+            sorted_ids = bus_quality.sortby(bus_quality, ascending=True).MSR_ID.values
+            # Get capacities in the same sorted order
+            sorted_capacity = bus_capacity.sel(MSR_ID=sorted_ids)
+            
+            # Calculate cumulative capacity
+            cumsum_capacity = sorted_capacity.cumsum()
+            total_capacity = cumsum_capacity.isel(MSR_ID=-1)
+            
+            # Find MSRs needed to reach top_percent threshold
+            capacity_threshold = total_capacity * top_percent
+            mask_threshold = cumsum_capacity <= capacity_threshold
+            
+            # Select MSRs up to threshold (always include at least one)
+            best_ids = sorted_ids[mask_threshold.values]
+            if len(best_ids) == 0:
+                best_ids = sorted_ids[:1]
+            
+            selected_ids.extend(best_ids)
+            
+            # Old (simpler) version when only a fixed number of MSR per bus was selected, without taking into account the cumulative capacity
+            # n_top = max(1, int(len(bus_quality) * top_percent))
+            # best_ids = bus_quality.sortby(bus_quality, ascending=True).MSR_ID.values[:n_top] # bus_quality.sortby(bus_quality, ascending=False).MSR_ID.values[:n_top]  --- if quality metric is the mean windspeed, otherwise if it is the cost, we take directly the CAPEX value and sort in ascending order
+
+        xr_top = xr_msr.sel(MSR_ID=selected_ids)
+
+        xr_bus_profile = xr_top["profile"].groupby("bus").mean("MSR_ID")
+
+        p_nom_bus = xr_top["p_nom_max"].groupby("bus").sum("MSR_ID")
+
+        capex_bus = xr_top["CAPEX"].groupby("bus").mean("MSR_ID")
+
+    else:
+        raise ValueError("aggregation must be 'weighted' or 'top_percent'")
+
+    #Attach previous data sets into a single xarray file
+    xr_out = xr.Dataset(
+        {
+            "profile": xr_bus_profile,
+            "p_nom_max": p_nom_bus,
+            "CAPEX": capex_bus,
+        }
+    )
+
+    xr_out = xr_out.assign_coords(
+    #     x=("bus", buses.loc[xr_out.bus.values, "x"].values),
+    #     y=("bus", buses.loc[xr_out.bus.values, "y"].values),
+    # )
+    x=("bus", buses.reindex(xr_out.bus.values)["x"].values),
+    y=("bus", buses.reindex(xr_out.bus.values)["y"].values),
+    )
+
+
+    #Change time format from integer to date/hour
+    xr_out = xr_out.assign_coords(
+        time=pd.date_range("2013-01-01", periods=8760, freq="H")
+    )
+
+    # ------------------------------------------------------------------
+    # 5. Adapt windspeeds to availability factors
+    # ------------------------------------------------------------------
+
+    #interpolate windspeeds for the IEC wind classed used
+    from scipy.interpolate import interp1d
+
+    IECclass = "IEC2"
+    interp_curves = {
+        IECclass: interp1d(
+            pc["Wind speed m/s"],
+            pc["IEC Class 1"],
+            bounds_error=False,
+            fill_value=0.0
+        ),
+    }
+
+    curve = interp_curves[IECclass]
+
+    def apply_power_curve(ws, curve):
+        return curve(ws)
+
+    xr_new = xr_out.copy()
+
+    xr_new["profile_cf"] = xr.apply_ufunc(
+        apply_power_curve,
+        xr_out["profile"],
+        kwargs={"curve": curve},
+        vectorize=True,
+        dask="parallelized",
+        output_dtypes=[float],
+    )
+
+    xr_out["profile"] = xr_new["profile_cf"]
+
+    #ensure datatype consistency between both datasets
+    resources = resources.assign_coords(
+        bus=resources.bus.astype(str)
+    )
+
+    xr_out = xr_out.assign_coords(
+        bus=xr_out.bus.astype(str)
+    )
+
+    # ------------------------------------------------------------------
+    # 6. Overwrite Atlite outputs with MSR data
+    # ------------------------------------------------------------------
+
+    #overwrite the profiles from atlite with the ones from MSR
+    resources_new = resources.copy(deep=True)
+
+    resources_new["profile"].loc[
+        dict(bus=xr_out.bus)
+    ] = xr_out["profile"]
+
+    #overwrite the max capacity from atlite with the one from MSR
+    resources_new["p_nom_max"].loc[
+        dict(bus=xr_out.bus)
+    ] = xr_out["p_nom_max"]
+
+    #and store capex as a potential future input
+    if "CAPEX" not in resources_new:
+        resources_new["CAPEX"] = xr.zeros_like(resources_new["p_nom_max"])
+
+    resources_new["CAPEX"].loc[
+        dict(bus=xr_out.bus)
+    ] = xr_out["CAPEX"]
+
+    #Set to 0 data for buses not considered in the MSR
+    non_msr_buses = sorted(
+        set(resources_new.bus.values) - set(xr_out.bus.values)
+    )
+
+    resources_new["profile"].loc[
+        dict(bus=non_msr_buses)
+    ] = 0.0
+
+    resources_new["p_nom_max"].loc[
+        dict(bus=non_msr_buses)
+    ] = 0.0
+
+    return resources_new
+
+
+def apply_msr_solar_profiles(resources, msr_cfg, buses):
+    """
+    Override PyPSA solar profiles with MSR-derived solar availability.
+
+    Parameters
+    ----------
+    resources : xr.Dataset
+        In-memory PyPSA solar resource dataset (already built).
+    msr_cfg : dict
+        Dictionary with keys:
+        - ghi_csv: Global Horizontal Irradiance time series
+        - solar_geojson: MSR regions with solar potential
+        - efficiency: Panel efficiency factor (default 0.92)
+        - aggregation: "weighted" or "top_percent"
+        - top_percent: Threshold for top_percent aggregation
+
+    Returns
+    -------
+    xr.Dataset
+        Updated resources dataset.
+    """
+
+    resources = resources.copy(deep=True)
+
+    # ------------------------------------------------------------------
+    # 1. Load MSR inputs
+    # ------------------------------------------------------------------
+
+    df_ghi = pd.read_csv(msr_cfg["solar_csv"])  # GHI profiles for each MSR [W/m²]
+    gdf = gpd.read_file(msr_cfg["solar_geojson"])  # MSR regions with solar potential
+    efficiency = msr_cfg.get("efficiency", 0.92)  # Simplified panel efficiency
+    aggregation = msr_cfg["aggregation"]
+    top_percent = msr_cfg["top_percent"]
+
+    # ------------------------------------------------------------------
+    # 2. Reformatting datasets
+    # ------------------------------------------------------------------
+    
+    # Extract hourly columns (assumed to be named H0, H1, ..., H8759)
+    profile_cols = [c for c in df_ghi.columns if c.startswith("H")]
+    df_long = (
+        df_ghi[["MSR_ID"] + profile_cols]
+        .melt(id_vars="MSR_ID", var_name="hour", value_name="profile")
+    )
+    df_long["time"] = df_long["hour"].str.replace("H", "").astype(int) - 1
+
+    # Convert to xarray
+    xr_msr = (
+        df_long
+        .set_index(["time", "MSR_ID"])
+        .to_xarray()
+    )
+
+    # Add parameters from the shapes file
+    xr_msr["p_nom_max"] = ("MSR_ID", gdf.set_index("FID")["CapacityMW"])
+    xr_msr["CAPEX"] = ("MSR_ID", gdf.set_index("FID")["trCAPEX-kW"])
+    xr_msr["AreakM2"] = ("MSR_ID", gdf.set_index("FID")["AreakM2"])
+    
+    xr_msr["weight"] = ("MSR_ID", np.ones(len(xr_msr.MSR_ID)))
+
+    # Extract coordinates for each MSR
+    msr_coor = pd.DataFrame()
+    msr_coor["MSR_ID"] = gdf["FID"]
+    msr_coor["lon"] = gdf.geometry.centroid.x
+    msr_coor["lat"] = gdf.geometry.centroid.y
+
+    # Add coordinates to xarray
+    xr_msr = xr_msr.assign_coords(
+        lat=("MSR_ID", msr_coor["lat"].values),
+        lon=("MSR_ID", msr_coor["lon"].values),
+    )
+
+    # ------------------------------------------------------------------
+    # 3. Build MSR xarray dataset - Bus mapping
+    # ------------------------------------------------------------------
+
+    gdf_msr_pts = gpd.GeoDataFrame(
+        msr_coor,
+        geometry=gpd.points_from_xy(msr_coor.lon, msr_coor.lat),
+        crs="EPSG:4326"
+    )
+
+    gdf_buses = gpd.GeoDataFrame(
+        buses.copy(),
+        geometry=gpd.points_from_xy(buses.x, buses.y),
+        crs="EPSG:4326"
+    )
+
+    # Reproject to Web Mercator for distance calculations
+    gdf_msr_pts = gdf_msr_pts.to_crs(3857)
+    gdf_buses = gdf_buses.to_crs(3857)
+
+    # Assign nearest bus to each MSR
+    msr_to_bus = gpd.sjoin_nearest(
+        gdf_msr_pts,
+        gdf_buses[["geometry"]],
+        how="left"
+    )
+
+    # Clean columns
+    msr_to_bus = (
+        msr_to_bus
+        .reset_index(drop=True)
+        .rename(columns={"index": "MSR_ID", "index_right": "bus"})
+    )
+
+    # Create MSR-to-bus mapping
+    bus_map = (
+        msr_to_bus
+        .set_index("MSR_ID")
+        .loc[xr_msr.MSR_ID.values, "bus"]
+        .astype(str)
+    )
+
+    # Add bus coordinate
+    xr_msr = xr_msr.assign_coords(
+        bus=("MSR_ID", bus_map.values)
+    )
+
+    # ------------------------------------------------------------------
+    # 4. Aggregate data for each bus
+    # ------------------------------------------------------------------
+
+    if aggregation == "weighted":
+
+        # Aggregate using weighted average (weight by area)
+        bus_weight = xr_msr["AreakM2"]
+
+        num = (xr_msr["profile"] * bus_weight).groupby("bus").sum(dim="MSR_ID")
+        den = bus_weight.groupby("bus").sum(dim="MSR_ID")
+
+        xr_bus_profile = num / den
+
+        p_nom_bus = xr_msr["p_nom_max"].groupby("bus").sum(dim="MSR_ID")
+
+        capex_bus = ((xr_msr["CAPEX"] * xr_msr["AreakM2"]).groupby("bus").sum(dim="MSR_ID") / den)
+
+    elif aggregation == "top_percent":
+
+        # Select best MSRs by quality metric (beam irradiance or CAPEX)
+        quality = xr_msr["CAPEX"]  # or xr_msr["profile"].mean("time") for mean GHI
+
+        selected_ids = []
+
+        for bus in np.unique(xr_msr.bus.values):
+
+            bus_mask = xr_msr.bus == bus
+            bus_quality = quality.where(bus_mask, drop=True)
+            bus_capacity = xr_msr["p_nom_max"].where(bus_mask, drop=True)
+
+            # Sort by quality (CAPEX) ascending (lowest cost first)
+            sorted_ids = bus_quality.sortby(bus_quality, ascending=True).MSR_ID.values
+            sorted_capacity = bus_capacity.sel(MSR_ID=sorted_ids)
+
+            # Calculate cumulative capacity
+            cumsum_capacity = sorted_capacity.cumsum()
+            total_capacity = cumsum_capacity.isel(MSR_ID=-1)
+
+            # Find MSRs up to top_percent threshold
+            capacity_threshold = total_capacity * top_percent
+            mask_threshold = cumsum_capacity <= capacity_threshold
+
+            # Select MSRs (always include at least one)
+            best_ids = sorted_ids[mask_threshold.values]
+            if len(best_ids) == 0:
+                best_ids = sorted_ids[:1]
+
+            selected_ids.extend(best_ids)
+
+        xr_top = xr_msr.sel(MSR_ID=selected_ids)
+
+        xr_bus_profile = xr_top["profile"].groupby("bus").mean("MSR_ID")
+        p_nom_bus = xr_top["p_nom_max"].groupby("bus").sum("MSR_ID")
+        capex_bus = xr_top["CAPEX"].groupby("bus").mean("MSR_ID")
+
+    else:
+        raise ValueError("aggregation must be 'weighted' or 'top_percent'")
+
+    # Combine into output dataset
+    xr_out = xr.Dataset(
+        {
+            "profile": xr_bus_profile,
+            "p_nom_max": p_nom_bus,
+            "CAPEX": capex_bus,
+        }
+    )
+
+    xr_out = xr_out.assign_coords(
+        x=("bus", buses.reindex(xr_out.bus.values)["x"].values),
+        y=("bus", buses.reindex(xr_out.bus.values)["y"].values),
+    )
+
+    # Change time format
+    xr_out = xr_out.assign_coords(
+        time=pd.date_range("2013-01-01", periods=8760, freq="H")
+    )
+
+    # ------------------------------------------------------------------
+    # 5. Convert GHI to capacity factor (irradiance → availability)
+    # ------------------------------------------------------------------
+
+    # Normalize GHI to capacity factor using simplified efficiency
+    # Assume standard test condition (STC) reference of ~1000 W/m²
+    STC_reference = 1000.0  # W/m²
+    
+    xr_new = xr_out.copy()
+    
+    xr_new["profile_cf"] = (xr_out["profile"] / STC_reference) * efficiency
+    
+    # Clip to [0, 1] range
+    xr_new["profile_cf"] = xr_new["profile_cf"].clip(min=0, max=1)
+    
+    xr_out["profile"] = xr_new["profile_cf"]
+
+    # Ensure datatype consistency
+    resources = resources.assign_coords(
+        bus=resources.bus.astype(str)
+    )
+
+    xr_out = xr_out.assign_coords(
+        bus=xr_out.bus.astype(str)
+    )
+
+    # ------------------------------------------------------------------
+    # 6. Overwrite Atlite outputs with MSR data
+    # ------------------------------------------------------------------
+
+    resources_new = resources.copy(deep=True)
+
+    # Overwrite profiles
+    resources_new["profile"].loc[
+        dict(bus=xr_out.bus)
+    ] = xr_out["profile"]
+
+    # Overwrite max capacity
+    resources_new["p_nom_max"].loc[
+        dict(bus=xr_out.bus)
+    ] = xr_out["p_nom_max"]
+
+    # Store CAPEX
+    if "CAPEX" not in resources_new:
+        resources_new["CAPEX"] = xr.zeros_like(resources_new["p_nom_max"])
+
+    resources_new["CAPEX"].loc[
+        dict(bus=xr_out.bus)
+    ] = xr_out["CAPEX"]
+
+    # Set non-MSR buses to zero
+    non_msr_buses = sorted(
+        set(resources_new.bus.values) - set(xr_out.bus.values)
+    )
+
+    resources_new["profile"].loc[
+        dict(bus=non_msr_buses)
+    ] = 0.0
+
+    resources_new["p_nom_max"].loc[
+        dict(bus=non_msr_buses)
+    ] = 0.0
+
+    return resources_new
+
+
 if __name__ == "__main__":
     if "snakemake" not in globals():
         from _helpers import mock_snakemake
 
         os.chdir(os.path.dirname(os.path.abspath(__file__)))
-        snakemake = mock_snakemake("build_renewable_profiles", technology="solar")
+        snakemake = mock_snakemake("build_renewable_profiles", technology="solar")        # technology can be solar, onshore, offshore, hydro_runofriver, hydro_reservoir
         sets_path_to_root("pypsa-earth")
     configure_logging(snakemake)
 
@@ -824,6 +1385,33 @@ if __name__ == "__main__":
         if "clip_p_max_pu" in config:
             min_p_max_pu = config["clip_p_max_pu"]
             ds["profile"] = ds["profile"].where(ds["profile"] >= min_p_max_pu, 0)
+
+        #New section to check if function to correct wind profiles based on MSR data
+        if snakemake.wildcards.technology == "onwind":
+            logger.info("Checking if MSR data is available")
+            if config.get("use_msr_wind", False):
+                logger.info("MSR wind data detected – overriding wind profiles")
+                ds = apply_msr_wind_profiles(
+                    ds,
+                    msr_cfg=config["msr"],
+                    buses=bus_coords
+                )
+            else:
+                logger.info("MSR wind disabled – using standard PyPSA profiles")
+        
+        #New section to check if function to correct solar profiles based on MSR data
+        if snakemake.wildcards.technology == "solar":
+            logger.info("Checking if MSR data is available")
+            if config.get("use_msr_solar", False):
+                logger.info("MSR solar data detected – overriding solar profiles")
+                ds = apply_msr_solar_profiles(
+                    ds,
+                    msr_cfg=config["msr"],
+                    buses=bus_coords
+                )
+            else:
+                logger.info("MSR solar disabled – using standard PyPSA profiles")
+
 
         ds.to_netcdf(snakemake.output.profile)
     client.shutdown()
