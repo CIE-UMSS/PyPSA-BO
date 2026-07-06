@@ -539,7 +539,7 @@ def apply_msr_wind_profiles(resources, msr_cfg, buses):
 
     #Add parameters from the shapes file into the new xarray 
     xr_msr["p_nom_max"] = ("MSR_ID", gdf.set_index("FID")["CapacityMW"])
-    xr_msr["CAPEX"] = ("MSR_ID", gdf.set_index("FID")["trCAPEX-kW"])
+    xr_msr["CAPEX"] = ("MSR_ID", gdf.set_index("FID")["TotalCAPEX"])
     xr_msr["AreakM2"] = ("MSR_ID", gdf.set_index("FID")["AreakM2"])
 
     xr_msr["weight"] = ("MSR_ID", np.ones(len(xr_msr.MSR_ID)))
@@ -838,7 +838,7 @@ def apply_msr_solar_profiles(resources, msr_cfg, buses):
 
     # Add parameters from the shapes file
     xr_msr["p_nom_max"] = ("MSR_ID", gdf.set_index("FID")["CapacityMW"])
-    xr_msr["CAPEX"] = ("MSR_ID", gdf.set_index("FID")["trCAPEX-kW"])
+    xr_msr["CAPEX"] = ("MSR_ID", gdf.set_index("FID")["TotalCAPEX"])
     xr_msr["AreakM2"] = ("MSR_ID", gdf.set_index("FID")["AreakM2"])
     
     xr_msr["weight"] = ("MSR_ID", np.ones(len(xr_msr.MSR_ID)))
@@ -1386,6 +1386,7 @@ if __name__ == "__main__":
             min_p_max_pu = config["clip_p_max_pu"]
             ds["profile"] = ds["profile"].where(ds["profile"] >= min_p_max_pu, 0)
 
+    # ------------------------------------------------------------------
         #New section to check if function to correct wind profiles based on MSR data
         if snakemake.wildcards.technology == "onwind":
             logger.info("Checking if MSR data is available")
@@ -1411,7 +1412,7 @@ if __name__ == "__main__":
                 )
             else:
                 logger.info("MSR solar disabled – using standard PyPSA profiles")
-
+    # ------------------------------------------------------------------
 
         ds.to_netcdf(snakemake.output.profile)
     client.shutdown()

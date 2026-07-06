@@ -170,7 +170,7 @@ electricity:
   custom_powerplants: replace  #  "false" use only powerplantmatching (ppm) data, "merge" combines ppm and custom powerplants, "replace" use only custom powerplants
 
   conventional_carriers: [nuclear, oil, OCGT, CCGT, coal, lignite, geothermal, biomass]
-  renewable_carriers: [solar, onwind, hydro]          # # offwind-ac, offwind-dc, are removed #### , solar2, onwind2 are commented out for now (used in cost-supply analysis)
+  renewable_carriers: [solar, onwind, hydro]          # # offwind-ac, offwind-dc, are removed #### , solar2, onwind2 are commented out for now (caqn be used for other tests)
 
   estimate_renewable_capacities:
     stats: False # False, = greenfield expansion, 'irena' uses IRENA stats to add expansion limits
